@@ -1,0 +1,322 @@
+		WRTC
+
+WRTC is an interpreted language which exists primarily to output bytes.
+
+	USAGE
+
+wrtc <infile> <outfile>
+
+	PARSING CONVENTIONS
+
+A program consists of a linear array of tokens. Each token is one of two kinds:
+a regular token, and a literal token. A regular token is simply retrieved from
+the first non-whitespace character after the last token, to the first
+whitespace character following. A literal token is instead retrieved upon
+reaching a quotation mark (") and consumes characters until the following
+quotation mark.
+
+The major difference between tokens is that literals may contain spaces and
+lowercase letters, while a regular token may not contain spaces and is
+converted to uppercase before execution.
+
+	COMMAND LIST
+
+The execution of a program consists of reading a 'leading token' and then
+consuming a command-dependent number of tokens in the execution thereof.
+What follows is a list of commands:
+
+	REMARK <token>
+		Skips itself and the token which follows it.
+
+		EXAMPLE		Does nothing
+
+			REMARK "
+				This remark is multiline because literal tokens
+				do not check the whitespace inside them. You
+				would however require \ in the remark for a
+				double quote to be allowed (i.e., \")
+			"
+
+	BLOCK
+		Creates a new block in the memory of the output, if the token
+		following BLOCK is FROM, then it will have the form:
+
+		BLOCK FROM <value> TO <value>
+
+		And will describe the initial address (in the output) and the
+		final address (in the output) of the block. If nothing follows
+		the leaing BLOCK, then FROM will be the value of the current
+		block's TO (or zero in the case that this is the first block)
+		and TO will be set to zero (and redecided upon a following
+		END-BLOCK).
+
+		The current block is set to this new block.
+
+		EXAMPLE		Creates a bootable binary which halts.
+			BLOCK FROM 0 TO 1FE
+				WRITE 0F4 0EB 0FD THEN
+			END-BLOCK
+
+			BLOCK
+				WRITE 55 0AA THEN
+			END-BLOCK
+
+	END-BLOCK
+		If the current block's TO value is less than or equal to it's
+		FROM value, it shall be updated to the length of the data of
+		the block plus the FROM value of the block.
+
+		The current block is set to None.
+
+		EXAMPLE		Creates a block of zero size
+
+			BLOCK
+			END-BLOCK
+
+	WRITE <values...> THEN
+		Followed by a list of values terminated with THEN, each of
+		these values are bitwise-anded with 0xFF and added to the data
+		of the current_block. If there is no current_block, it is
+		undefinded behaviour.
+
+		EXAMPLE		Writes 'HELLO WORLD' to the file
+
+			BLOCK
+				WRITE 48 45 4C 4C 4F 20 57 THEN
+			END-BLOCK
+
+	DECLARE
+		If directly following is GLOBAL then the value declared is
+		declared in the topmost scope. If it is LOCAL then it is
+		in the current scope, LOCAL is default and need not be
+		specified.
+
+		If following the optional scope specified, CONSTANT is
+		specified, in the case of a variable, it will be declared as
+		constant and thus cannot change. In the case of a procedure
+		it defines that WRITE syntax shall be used. However if it is
+		MUTABLE, the variable shall be mutable and the procedure shall
+		use BLOCK syntax. Think of the procedure CONST/MUT dichotomy
+		as describing whether or not the procedure may rely on
+		variables or stack. MUTABLE is default.
+
+		Following the optional scope and mutability specified, there
+		*must* be either VARIABLE or PROCEDURE present.
+
+		If variable is present, the whole expression is of the
+		following form:
+
+			DECLARE <scope> <mutability> VARIABLE <name> AS <value>
+
+		If procedure is present and it is MUTABLE the expression is
+		as follows:
+
+			DECLARE <scope> [MUTABLE] PROCEDURE <name>
+				<tokens...>
+			END-PROCEDURE
+
+		Defining the procedure as the list of tokens specified.
+
+		If instead, the procedure is CONSTANT then the following is
+		the expression:
+
+			DECLARE <scope> CONSTANT PROCEDURE <name> AS
+				<values...> THEN
+
+		Which defines the procedure as though it where a WRITE
+		statement containing all tokens following the AS.
+
+		EXAMPLE		Creates a variable and two procedures which
+				have the same function of writing HELLO to the
+				output.
+
+			DECLARE GLOBAL CONSTANT VARIABLE CONST AS 4E
+
+			DECLARE GLOBAL PROCEDURE HELLO
+				WRITE 48 45 4C 4C 4F THEN
+			END-PROCEDURE
+
+			DECLARE GLOBAL CONSTANT PROCEDURE HELLO2 AS 48 45 4C
+				4C 4F THEN
+
+	MOVE <value> INTO <name>
+		Sets the MUTABLE variable named to the value specified.
+
+	( <values...> )
+		Pops the values from the stack.
+
+		EXAMPLE		A procedure which writes its input from the
+				stack.
+
+			DECLARE PROCEDURE OUT
+				( INPUT )
+				WRITE INPUT THEN
+			END-PROCEDURE
+
+	<token> <values...> THEN
+		If the command given is unknown and consititutes a previously
+		DECLARED PROCEDURE then the values shall be pushed to the stack
+		in reverse order and the procedure will be executed.
+
+		EXAMPLE		Calls the procedure from the () example writing
+				0FF to the output.
+
+			BLOCK
+				OUT 0FF THEN
+			END-BLOCK
+
+	IF <value> IS [NOT] ZERO <tokens...> [ELSE <tokens...>] END-IF
+		Checks if the value is zero and executes the tokens before
+		END-IF/ELSE if that value is/is not zero according to the
+		presence of the NOT symbol.
+
+		If the statement does not run the 'if code' then the code
+		after ELSE will run if present.
+
+		EXAMPLE		A procedure which outputs 0 if passed a 1
+				the stack and a 1 if passed a zero.
+
+			DECLARE PROCEDURE NOT ( INPUT )
+				IF INPUT IS NOT ZERO
+					WRITE 00 THEN
+				ELSE
+					WRITE 01 THEN
+				END-IF
+			END-PROCEDURE
+
+	INCLUDE <token>
+		Reads the file specified and executes it in place with the
+		current scope, such that it would be if it were in the file
+		at the current location.
+
+		EXAMPLE		Including the OUT procedure from the () example
+				from a file out.wrt and executing it.
+
+			INCLUDE "out.wrt"
+
+			BLOCK
+				OUT 0FF THEN
+			END-BLOCK
+
+	$ ...
+		The following token is read as namespaced and executed
+		accordingly. We shall from hereon refer to namespaced
+		commands with a prefixed '$'.
+
+	$ ADD <value> TO <name>
+		Adds the value specified to the MUTABLE variable named.
+
+		EXAMPLE		Add 10 to X.
+
+			DECLARE VARIABLE X AS 2
+			$ ADD 0A TO X
+			REMARK "X is now 12 (0C)"
+
+	$ SUBTRACT <value> FROM <name>
+		Subtracts the value specified from the MUTABLE variable named.
+
+		EXAMPLE		Subtract 10 from X.
+
+			DECLARE VARIABLE X AS 0C
+			$ SUBTRACT 0A FROM X
+			REMARK "X is now 2"
+
+	$ MULTIPLY <name> BY <value>
+		Multiplies the MUTABLE variable named by the value specified.
+
+		EXAMPLE		Multiply X by 2.
+
+			DECLARE VARIABLE X AS 06
+			$ MULTIPLY X BY 02
+			REMARK "X is now 12 (0C)"
+
+	$ DIVIDE <name> BY <value>
+		Divides the MUTABLE variable named by the value specified.
+
+		EXAMPLE		Divide X by 2.
+
+			DECLARE VARIABLE X AS 18
+			$ DIVIDE X BY 02
+			REMARK "X is now 12 (0C)"
+
+	$ MODULO <value> OF <name>
+		Retrieves the remainder of ((MUTABLE name) mod value).
+
+		EXAMPLE		Get the remainder of 32 / 3
+
+			DECLARE VARIABLE X AS 32
+			$ MODULO 3 OF X
+			REMARK "X is now 2"
+
+	$ AND <value> WITH <name>
+		Bitwise ands the MUTABLE variable named with the value
+		specified.
+
+		EXAMPLE		X & 4
+
+			DECLARE VARIABLE X AS 0C
+			$ AND 04 WITH X
+			REMARK "X is now 04"
+
+	$ OR <value> WITH <name>
+		Bitwise ors the MUTABLE variable named with the value
+		specified.
+
+		EXAMPLE		X | 2
+
+			DECLARE VARIABLE X AS 0C
+			$ OR 02 WITH X
+			REMARK "X is now 14 (0E)"
+
+	$ XOR <value> WITH <name>
+		Bitwise xors the MUTABLE variable named with the value
+		specified.
+
+		EXAMPLE		X | 2
+
+			DECLARE VARIABLE X AS 0C
+			$ XOR 00 WITH X
+			$ AND 0FF WITH X
+			REMARK "X is now 243 (0F3)"
+
+	$ SHL <name> BY <value>
+		Shifts the MUTABLE variable named left by the value specified.
+
+		EXAMPLE		X << 2
+
+			DECLARE VARIABLE X AS 03
+			$ SHL X BY 2
+			REMARK "X is now 12 (0C)"
+
+	$ SHR <name> BY <value>
+		Shifts the MUTABLE variable named right by the value specified.
+
+		EXAMPLE		X >> 2
+
+			DECLARE VARIABLE X AS 30
+			$ SHL X BY 2
+			REMARK "X is now 12 (0C)"
+
+	$ PUSH <value>
+		Pushes the value to the stack.
+
+		EXAMPLE		Call a procedure with arguments (OUT) without
+				any values in the parameter list.
+
+			BLOCK
+				$ PUSH 0FF
+				OUT THEN
+			END-BLOCK
+
+	$ POP [INTO <name>]
+		Pops a value of the stack, if INTO <name> is present, the
+		corresponding variable will have the value popped into it.
+
+		EXAMPLE		Declare OUT without use of the ( command.
+
+			DECLARE PROCEDURE OUT
+				DECLARE VARIABLE INPUT
+
+				$ POP INTO INPUT
+				WRITE INPUT THEN
+			END-PROCEDURE
